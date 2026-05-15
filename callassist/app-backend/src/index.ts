@@ -18,8 +18,24 @@ import { attachMediaStreamServer } from "./audio/mediaStreamServer";
 
 const app = express();
 
+const allowedOrigins = (process.env["ALLOWED_ORIGINS"] ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
+
+const corsOptions: cors.CorsOptions = allowedOrigins.length > 0
+  ? {
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true); // same-origin / server-to-server
+        if (allowedOrigins.includes(origin)) return cb(null, true);
+        return cb(new Error(`CORS: origin not allowed: ${origin}`));
+      },
+      credentials: true,
+    }
+  : { origin: true, credentials: true };
+
 app.use(helmet());
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.use((req, _res, next) => {
