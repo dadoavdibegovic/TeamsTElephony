@@ -1,0 +1,9 @@
+{
+  "name": "callassist-shared",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "libphonenumber-js": "^1.12.42"
+  }
+}
