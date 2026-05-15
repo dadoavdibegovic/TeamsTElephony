@@ -1,0 +1,26 @@
+@host = http://localhost:3000
+@correlationId = test-correlation-00000000-0000-0000-0000-000000000001
+@teamsUserId   = 11111111-2222-3333-4444-555555555555
+
+### Incoming call — backend route called by the Event Grid forwarder
+POST {{host}}/calls/incoming
+Content-Type: application/json
+
+{
+  "rawPhone": "+493411234567",
+  "correlationId": "{{correlationId}}",
+  "incomingCallContext": "fake-incoming-call-context-token",
+  "callerDisplayName": "Test Caller"
+}
+
+### Health check
+GET {{host}}/health
+
+### Transfer the active call to a Teams user
+POST {{host}}/calls/transfer
+Content-Type: application/json
+
+{
+  "correlationId": "{{correlationId}}",
+  "teamsUserId": "{{teamsUserId}}"
+}
