@@ -17,5 +17,11 @@
     }
   },
   "include": ["src/**/*", "../shared/**/*"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/**/*.test.ts",
+    "../shared/**/*.test.ts",
+    "vitest.config.ts"
+  ]
 }

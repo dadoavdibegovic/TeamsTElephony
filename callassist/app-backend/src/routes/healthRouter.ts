@@ -5,8 +5,9 @@ export const healthRouter = Router();
 
 healthRouter.get("/", (_req: Request, res: Response) => {
   res.json({
-    status:      "healthy",
-    activeCalls: callStore.size(),
-    timestamp:   new Date().toISOString(),
+    status:       "healthy",
+    activeCalls:  callStore.size(),
+    trackedCalls: callStore.total(),
+    timestamp:    new Date().toISOString(),
   });
 });

@@ -1,6 +1,7 @@
 import { getAcsClient } from "./acsClient";
 import { callStore } from "./callStore";
 import { MicrosoftTeamsUserIdentifier } from "@azure/communication-common";
+import { trackEvent } from "../utils/telemetry";
 
 export async function transferCallToTeams(
   correlationId: string,
@@ -27,5 +28,6 @@ export async function transferCallToTeams(
     assignedAgentId: teamsUserId,
   });
 
+  trackEvent("transfer_initiated", { correlationId, teamsUserId });
   console.log("Transfer initiated", { correlationId, teamsUserId });
 }

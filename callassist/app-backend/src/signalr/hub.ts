@@ -1,6 +1,8 @@
 import axios from "axios";
 import jwt from "jsonwebtoken";
 import { config } from "../config/config";
+import { withRetry } from "../utils/retry";
+import { trackEvent } from "../utils/telemetry";
 
 const HUB_NAME = "calltranskript";
 
@@ -57,23 +59,40 @@ export async function pushToAgent(
   try {
     const { endpoint, accessKey } = getParsed();
     const url   = `${endpoint}/api/v1/hubs/${HUB_NAME}`;
-    const token = signToken(url, accessKey);
 
-    await axios.post(
-      url,
-      { target: eventName, arguments: [payload] },
+    await withRetry(
+      async () => {
+        const token = signToken(url, accessKey);
+        await axios.post(
+          url,
+          { target: eventName, arguments: [payload] },
+          {
+            headers: {
+              Authorization:  `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            timeout: 5000,
+          },
+        );
+      },
       {
-        headers: {
-          Authorization:  `Bearer ${token}`,
-          "Content-Type": "application/json",
+        attempts:    2,
+        baseDelayMs: 250,
+        shouldRetry: (err) => {
+          if (!axios.isAxiosError(err)) return true;
+          const status = err.response?.status;
+          if (!status) return true;
+          return status >= 500 && status < 600;
         },
       },
     );
   } catch (err) {
+    const status = axios.isAxiosError(err) ? err.response?.status ?? null : null;
     const detail = axios.isAxiosError(err) && err.response
       ? { status: err.response.status, data: err.response.data }
       : err instanceof Error ? err.message : String(err);
     console.error("SignalR push failed", eventName, detail);
+    trackEvent("signalr_push_failed", { eventName, status });
   }
 }
 

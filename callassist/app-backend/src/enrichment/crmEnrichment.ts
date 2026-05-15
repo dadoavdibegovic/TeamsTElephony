@@ -17,6 +17,7 @@ import axios, { AxiosError } from "axios";
 import { CrmProfile } from "../../../shared/types/callerInfo";
 import { config } from "../config/config";
 import { NormalizedPhone } from "../../../shared/utils/phoneNormalizer";
+import { withRetry } from "../utils/retry";
 
 // SGB CRM raw response shape
 interface SgbPartner {
@@ -50,19 +51,27 @@ export async function lookupCallerInCrm(
 ): Promise<CrmProfile | null> {
 
   try {
-    const response = await axios.get<SgbSearchResponse>(
-      `${config.crm.baseUrl}/api/public-partner/lookup-by-phone`,
+    const response = await withRetry(
+      () => axios.get<SgbSearchResponse>(
+        `${config.crm.baseUrl}/api/public-partner/lookup-by-phone`,
+        {
+          params: { phone: phone.e164 },
+          headers: {
+            Authorization: `Bearer ${config.crm.apiKey}`,
+            Accept: "application/json",
+          },
+          timeout: 3000, // 3s max — must not delay call answer
+        },
+      ),
       {
-        params: {
-          phone: phone.e164,
-          // includeMobile: false  // uncomment to exclude mobile numbers
+        attempts:    2,
+        baseDelayMs: 200,
+        shouldRetry: (err) => {
+          if (!(err instanceof AxiosError)) return false;
+          if (!err.response) return true; // network/timeout
+          return err.response.status >= 500 && err.response.status < 600;
         },
-        headers: {
-          Authorization: `Bearer ${config.crm.apiKey}`,
-          Accept: "application/json",
-        },
-        timeout: 3000, // 3s max — must not delay call answer
-      }
+      },
     );
 
     const { data, pagination } = response.data;

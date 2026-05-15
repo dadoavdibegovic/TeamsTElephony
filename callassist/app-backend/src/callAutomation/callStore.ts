@@ -10,5 +10,10 @@ export const callStore = {
     if (s) store.set(id, { ...s, ...patch });
   },
   delete: (id: string) => store.delete(id),
-  size:   () => store.size,
+  size:   () => {
+    let n = 0;
+    for (const s of store.values()) if (s.phase !== "ended") n += 1;
+    return n;
+  },
+  total:  () => store.size,
 };

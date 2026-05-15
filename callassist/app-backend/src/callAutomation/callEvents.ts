@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { callStore } from "./callStore";
 import { pushToAgent } from "../signalr/hub";
 import { audioOrchestrator } from "../audio/audioOrchestrator";
+import { trackEvent, trackMetric } from "../utils/telemetry";
 
 export async function handleCallbackEvent(req: Request, res: Response): Promise<void> {
   res.status(200).send();
@@ -29,12 +30,19 @@ export async function handleCallbackEvent(req: Request, res: Response): Promise<
           reason: e.data?.resultInformation?.message ?? "Unknown",
         });
         break;
-      case "Microsoft.Communication.CallDisconnected":
+      case "Microsoft.Communication.CallDisconnected": {
+        const state = callStore.get(correlationId);
+        const totalMs = state?.answeredAt
+          ? Date.now() - state.answeredAt.getTime()
+          : null;
         callStore.update(correlationId, { phase: "ended", endedAt: new Date() });
         audioOrchestrator.stopForCall(correlationId);
         await pushToAgent("callEnded", { correlationId, endedAt: new Date().toISOString() });
+        trackEvent("call_ended", { correlationId, totalDurationMs: totalMs });
+        if (totalMs !== null) trackMetric("call_duration_ms", totalMs, { correlationId });
         setTimeout(() => callStore.delete(correlationId), 5 * 60 * 1000);
         break;
+      }
       default:
         console.log("Unhandled ACS event", { eventType, correlationId });
     }

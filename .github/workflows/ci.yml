@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  app-backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: callassist/app-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: callassist/app-backend/package-lock.json
+      - name: Install shared deps
+        run: npm ci
+        working-directory: callassist/shared
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  func-webhook:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: callassist/func-webhook
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: callassist/func-webhook/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  agent-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: callassist/agent-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: callassist/agent-ui/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build

@@ -1,5 +1,6 @@
 import { AzureOpenAI } from "openai";
 import { config } from "../config/config";
+import { trackEvent, trackMetric } from "../utils/telemetry";
 
 const SYSTEM_PROMPT =
   "Du bist ein KI-Assistent für Call-Center-Agenten bei SGB Energie. " +
@@ -40,6 +41,7 @@ export class SuggestionEngine {
     this.lastTranscript      = trimmed;
     this.lastSuggestionAt = now;
 
+    const start = Date.now();
     try {
       const response = await this.client.chat.completions.create({
         model:       config.openai.deployment,
@@ -52,9 +54,22 @@ export class SuggestionEngine {
       });
 
       const text = response.choices[0]?.message?.content?.trim() ?? "";
-      return text.length > 0 ? text : null;
+      const latencyMs = Date.now() - start;
+      if (text.length > 0) {
+        trackEvent("suggestion_generated", {
+          latencyMs,
+          transcriptLength: trimmed.length,
+          suggestionLength: text.length,
+        });
+        trackMetric("suggestion_latency_ms", latencyMs);
+        return text;
+      }
+      return null;
     } catch (err) {
       console.error("SuggestionEngine OpenAI call failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      trackEvent("suggestion_failed", {
         error: err instanceof Error ? err.message : String(err),
       });
       return null;

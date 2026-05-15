@@ -8,6 +8,7 @@ import { callStore } from "./callStore";
 import { enrichCaller } from "../enrichment/enrichmentOrchestrator";
 import { pushToAgent } from "../signalr/hub";
 import { config } from "../config/config";
+import { trackEvent, trackMetric, trackException } from "../utils/telemetry";
 
 function mediaTransportUrl(correlationId: string): string {
   const base = config.acs.callbackBaseUrl.replace(/^https:\/\//i, "wss://").replace(/^http:\/\//i, "ws://");
@@ -24,7 +25,9 @@ export interface IncomingCallPayload {
 export async function handleIncomingCall(payload: IncomingCallPayload): Promise<void> {
   const { rawPhone, correlationId, incomingCallContext } = payload;
   console.log("=== handleIncomingCall START ===", { correlationId, rawPhone });
+  const callStartedAt = Date.now();
   const callbackUri = `${config.acs.callbackBaseUrl}/calls/callback/${correlationId}`;
+  trackEvent("call_incoming", { correlationId, rawPhone });
 
   // 1. Set initial state immediately
   callStore.set(correlationId, {
@@ -43,11 +46,22 @@ export async function handleIncomingCall(payload: IncomingCallPayload): Promise<
   // 2. Start enrichment — DO NOT await here
   const enrichPromise = enrichCaller(rawPhone).then(r => {
     callStore.update(correlationId, { callerInfo: r.callerInfo });
+    trackEvent("enrichment_completed", {
+      correlationId,
+      durationMs: r.durationMs,
+      success:    r.success,
+      hasEntra:   r.callerInfo.entra !== null,
+      hasCrm:     r.callerInfo.crm !== null,
+    });
+    trackMetric("enrichment_duration_ms", r.durationMs, { correlationId });
     pushToAgent("callerInfo", {
       correlationId,
       callerInfo: r.callerInfo as unknown as Record<string, unknown>,
     }).catch(console.error);
-  }).catch(err => console.error("=== ENRICH ERROR ===", err));
+  }).catch(err => {
+    console.error("=== ENRICH ERROR ===", err);
+    trackException(err, { correlationId, stage: "enrichment" });
+  });
 
   // 3. Answer call immediately — does not wait for enrichment
   try {
@@ -71,6 +85,15 @@ export async function handleIncomingCall(payload: IncomingCallPayload): Promise<
       answeredAt: new Date(),
     });
 
+    const answerLatencyMs = Date.now() - callStartedAt;
+    trackEvent("call_answered", {
+      correlationId,
+      callConnectionId,
+      rawPhone,
+      answerLatencyMs,
+    });
+    trackMetric("call_answer_latency_ms", answerLatencyMs, { correlationId });
+
     await pushToAgent("callAnswered", {
       correlationId,
       callConnectionId,
@@ -81,6 +104,8 @@ export async function handleIncomingCall(payload: IncomingCallPayload): Promise<
 
   } catch (err) {
     console.error("=== ANSWER ERROR ===", err);
+    trackException(err, { correlationId, stage: "answer", rawPhone });
+    trackEvent("call_answer_failed", { correlationId, rawPhone });
     callStore.update(correlationId, { phase: "ended", endedAt: new Date() });
   }
 

@@ -1,73 +1,59 @@
-# React + TypeScript + Vite
+# agent-ui
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React agent panel for CallTranskript. Connects to the backend over SignalR
+and shows caller info, live transcript, AI suggestions, and call status.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Vite + React 18 + TypeScript
+- `@microsoft/signalr` client (negotiates against the backend, then opens a hub connection)
 
-## React Compiler
+## Environment
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Create `.env.local` (or set the env vars in your shell) before running:
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+VITE_BACKEND_URL=http://localhost:3000
+VITE_SIGNALR_HUB=calltranskript
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+In production these point at the deployed backend, e.g.
+`https://app-calltranskript-backend.azurewebsites.net`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Scripts
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm run dev     # vite dev server with HMR
+npm run build   # type-check + production bundle to dist/
+npm run preview # serve the built bundle locally
 ```
+
+## How it works
+
+`src/hooks/useSignalR.ts` builds a `HubConnection` against
+`${VITE_BACKEND_URL}/${VITE_SIGNALR_HUB}`, which the backend resolves via
+its `/<hub>/negotiate` endpoint (`signalrRouter.ts` → `buildClientNegotiateResponse`).
+
+The hub pushes these events (see `agent-ui/src/types/callTypes.ts` for shapes):
+
+| Event              | When                                                      |
+|--------------------|-----------------------------------------------------------|
+| `callAnswered`     | Backend has answered the ACS call                          |
+| `callerInfo`       | Entra + CRM enrichment has resolved                        |
+| `callConnected`    | ACS `CallConnected` event received                         |
+| `callTransferring` | A transfer to a Teams user is in progress                  |
+| `callEnded`        | ACS `CallDisconnected` event received                      |
+| `transcript`       | Azure Speech recognized (interim or final) a chunk         |
+| `aiSuggestion`     | GPT-4o produced a suggestion from the running transcript   |
+
+`App.tsx` wires the events to component state; the components are
+purely presentational and re-render on state changes.
+
+## Notes
+
+- The hub connection is currently anonymous — anyone who can reach the
+  negotiate endpoint gets a hub token. This is fine behind App Service
+  Easy Auth or a private network; review the auth posture before
+  exposing publicly.
+- All components use inline styles to avoid pulling in a styling library.
+  If this grows much further, consider extracting a shared theme object.
