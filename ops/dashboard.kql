@@ -1,0 +1,159 @@
+// CallTranskript — operational queries for Log Analytics / App Insights workbook
+//
+// Workspace: LogAnaliticsWorkspace (Call_Transkript_Infra)
+// App Insights component: appi-calltranskript (workspace-based)
+//
+// Custom events emitted by app-backend (see callassist/app-backend/src/utils/telemetry.ts):
+//   call_incoming        — every IncomingCall request that reached /calls/incoming
+//   call_answered        — ACS answer succeeded; callConnectionId established
+//   call_answer_failed   — ACS answer threw (e.g., bad context, timeout)
+//   call_ended           — ACS CallDisconnected event handled
+//   enrichment_completed — Entra+CRM lookup orchestration finished
+//   suggestion_generated — GPT-4o produced an agent suggestion
+//   suggestion_failed    — OpenAI call threw
+//   signalr_push_failed  — pushToAgent terminal failure after retry
+//   transfer_initiated   — warm transfer to Teams user requested
+//
+// Custom metrics:
+//   call_answer_latency_ms      — time from /calls/incoming receipt to ACS answer ack
+//   call_duration_ms            — answeredAt → CallDisconnected, ms
+//   enrichment_duration_ms      — Entra+CRM total wall time, ms
+//   suggestion_latency_ms       — OpenAI call latency, ms
+//
+// Each section below is a self-contained query. Paste into Log Analytics
+// Logs blade, or save each as a separate workbook tile.
+
+// ============================================================================
+// 1. Call volume (last 24h, hourly buckets)
+// ============================================================================
+AppEvents
+| where TimeGenerated > ago(24h)
+| where Name == "call_incoming"
+| summarize incoming = count() by bin(TimeGenerated, 1h)
+| join kind=fullouter (
+    AppEvents
+    | where TimeGenerated > ago(24h)
+    | where Name == "call_answered"
+    | summarize answered = count() by bin(TimeGenerated, 1h)
+  ) on TimeGenerated
+| project TimeGenerated, incoming = coalesce(incoming, 0), answered = coalesce(answered, 0)
+| order by TimeGenerated asc
+| render timechart
+
+// ============================================================================
+// 2. Answer success rate (last 24h)
+// ============================================================================
+AppEvents
+| where TimeGenerated > ago(24h)
+| where Name in ("call_incoming", "call_answered", "call_answer_failed")
+| summarize
+    incoming = countif(Name == "call_incoming"),
+    answered = countif(Name == "call_answered"),
+    failed   = countif(Name == "call_answer_failed")
+| extend
+    successPct = iff(incoming == 0, 0.0, round(100.0 * answered / incoming, 1)),
+    failurePct = iff(incoming == 0, 0.0, round(100.0 * failed   / incoming, 1))
+
+// ============================================================================
+// 3. Answer latency percentiles (last 24h)
+// ============================================================================
+AppMetrics
+| where TimeGenerated > ago(24h)
+| where Name == "call_answer_latency_ms"
+| summarize
+    p50 = percentile(Value, 50),
+    p95 = percentile(Value, 95),
+    p99 = percentile(Value, 99),
+    max = max(Value),
+    n   = count()
+
+// ============================================================================
+// 4. Enrichment latency + hit rate (last 24h)
+// ============================================================================
+AppEvents
+| where TimeGenerated > ago(24h)
+| where Name == "enrichment_completed"
+| extend
+    hasEntra   = tostring(Properties.hasEntra) == "true",
+    hasCrm     = tostring(Properties.hasCrm) == "true",
+    durationMs = todouble(tostring(Properties.durationMs))
+| summarize
+    n          = count(),
+    entraHits  = countif(hasEntra),
+    crmHits    = countif(hasCrm),
+    p50_ms     = percentile(durationMs, 50),
+    p95_ms     = percentile(durationMs, 95),
+    p99_ms     = percentile(durationMs, 99)
+| extend
+    entraHitPct = round(100.0 * entraHits / n, 1),
+    crmHitPct   = round(100.0 * crmHits   / n, 1)
+
+// ============================================================================
+// 5. Suggestion latency (only fires when calls have audio)
+// ============================================================================
+AppMetrics
+| where TimeGenerated > ago(24h)
+| where Name == "suggestion_latency_ms"
+| summarize
+    p50 = percentile(Value, 50),
+    p95 = percentile(Value, 95),
+    p99 = percentile(Value, 99),
+    n   = count()
+
+// ============================================================================
+// 6. SignalR push failures by event name (last 24h)
+// ============================================================================
+AppEvents
+| where TimeGenerated > ago(24h)
+| where Name == "signalr_push_failed"
+| extend
+    eventName = tostring(Properties.eventName),
+    status    = tostring(Properties.status)
+| summarize failures = count() by eventName, status
+| order by failures desc
+
+// ============================================================================
+// 7. Top exceptions by stage (last 24h)
+//    `stage` is set by our trackException calls — values: enrichment, answer
+// ============================================================================
+AppExceptions
+| where TimeGenerated > ago(24h)
+| extend stage = tostring(Properties.stage)
+| where isnotempty(stage)
+| summarize
+    n           = count(),
+    sampleTypes = make_set(ExceptionType, 5)
+  by stage
+| order by n desc
+
+// ============================================================================
+// 8. Call duration distribution (last 7d, answered calls only)
+// ============================================================================
+AppMetrics
+| where TimeGenerated > ago(7d)
+| where Name == "call_duration_ms"
+| extend duration_s = Value / 1000.0
+| summarize
+    p50_s = percentile(duration_s, 50),
+    p95_s = percentile(duration_s, 95),
+    p99_s = percentile(duration_s, 99),
+    n     = count()
+
+// ============================================================================
+// 9. Transfer outcomes (last 7d)
+// ============================================================================
+AppEvents
+| where TimeGenerated > ago(7d)
+| where Name == "transfer_initiated"
+| summarize transfers = count() by bin(TimeGenerated, 1d)
+| order by TimeGenerated asc
+
+// ============================================================================
+// 10. Per-call trace (replace <CORRELATION_ID> to inspect one call's full life)
+// ============================================================================
+let corr = "<CORRELATION_ID>";
+union AppEvents, AppExceptions, AppMetrics, AppTraces, AppRequests
+| where TimeGenerated > ago(2h)
+| where tostring(Properties) contains corr or Message contains corr
+| project TimeGenerated, Type, Name = coalesce(Name, OperationName, ""), Properties, Message = substring(coalesce(Message, ""), 0, 300)
+| order by TimeGenerated asc
