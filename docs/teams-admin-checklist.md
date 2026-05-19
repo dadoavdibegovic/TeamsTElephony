@@ -176,22 +176,30 @@ In Teams Admin Center → Voice → **Call queues** → **+ Add**.
   **Recommended**: use **Auto Attendant** instead of Call Queue for
   this pilot (see Step 3 alternative below).
 
-### 3 alternative — Use Auto Attendant instead
+### 3 alternative — Auto Attendant: usually unnecessary
 
-In Teams Admin Center → Voice → **Auto attendants** → **+ Add**.
+For a basic "screen + enrich every call" deployment, you **don't need
+an AA**. The Resource Account with the bound App Instance is itself
+the application endpoint. Skip this step and let calls flow directly
+from the Resource Account's DID to ACS.
 
-- [ ] **Name**: `CallTranskript Routing`
-- [ ] **Resource accounts**: add the `CallTranskript Routing`
-  resource account (the one with the DID).
-- [ ] **Operator** (optional): leave blank for pilot.
-- [ ] **Call flow** → **Call routing**:
-  - **First action**: *Redirect call*
-  - **Redirect to**: *External application*
-  - **Search for app**: select the ACS Application Instance from step 1.
+**You only need an AA if** you want greetings, business-hours menus,
+IVR digit options, or after-hours fallback. In that case the topology
+requires **two** Resource Accounts (one to front the AA, one bound to
+the ACS App Instance) — pointing an AA at its own Resource Account
+creates a routing loop.
+
+The two-RA AA pattern:
+
+- [ ] Create a *second* Resource Account, e.g., `aa-reception@sgb-energie.de`,
+  with its own license + DID.
+- [ ] Create Auto Attendant (Voice → Auto attendants → + Add):
+  - **Resource accounts**: the second one (`aa-reception`)
+  - **Call routing** → first action: *Redirect call*
+  - **Redirect to**: *Voice app* or *Person in your organization*
+    (depending on current UI label)
+  - **Search**: `acs-calltranskript@sgb-energie.de` (the App Instance one)
 - [ ] Save.
-
-This is the cleanest route: PSTN → AA → ACS app → `incoming-call`
-Event Grid → funcapp → app-backend.
 
 ---
 

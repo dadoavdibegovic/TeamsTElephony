@@ -108,18 +108,30 @@ If Teams says "this number is already assigned elsewhere," the DID
 currently routes to a Teams user or queue. Unassign it from there
 first, or pick a different test DID.
 
-### Step 5 — admin.teams.microsoft.com → Voice → Auto attendants → + Add
+### Step 5 — Auto Attendant: **SKIP for the basic test**
 
-- **Name**: `CallTranskript Routing`
-- **Default language**: German (de-DE)
-- **Operator**: skip
-- **Resource accounts**: add `CallTranskript Routing`
-- **Call flow**:
-  - **Greeting**: leave empty or "Connecting your call…" TTS
-  - **First action**: Redirect call
-  - **Redirect target**: **External application**
-  - **Search**: select **CallTranskript ACS** (the application instance from step 1)
-- Save
+The cleanest architecture for "screen and enrich every inbound call"
+is to *not* use an Auto Attendant at all. The Resource Account
+`acs-calltranskript@sgb-energie.de`, because its UPN is bound to the
+ACS Application Instance, IS the application endpoint. Calls landing
+on its DID route directly to ACS — no AA in the middle.
+
+> **Why no AA:** An AA needs a Resource Account at its "front" (the
+> DID lands there) and *another* destination at its "redirect target".
+> If you point the AA at the same Resource Account it's already fronted
+> by, you create a loop. The single-RA model works without the AA.
+
+**When you'd actually want an AA** (skip if not needed):
+
+You want a greeting, business hours, language menu, IVR digit selection,
+or after-hours fallback. Then you need **two** resource accounts:
+
+1. `aa-reception@sgb-energie.de` — has the DID, fronts the AA
+2. `acs-calltranskript@sgb-energie.de` — bound to the ACS App Instance,
+   referenced as the AA's "redirect target" via Voice app / Person in
+   your organization search
+
+For the first test, do without. Add an AA later if you need the IVR features.
 
 ### Step 6 — verify the SBC voice route
 
