@@ -88,8 +88,14 @@ New-CsOnlineApplicationInstance `
 
 ### 1c. Sync the app instance to Teams
 
+> **Microsoft Teams PowerShell ~6.x requires `-ApplicationId`.** Older
+> docs show `-ObjectId` only, which errors out with "At least one of
+> ApplicationId or AcsResourceId must be provided."
+
 ```powershell
-Sync-CsOnlineApplicationInstance -ObjectId "<OBJECT_ID_FROM_1B>"
+Sync-CsOnlineApplicationInstance `
+  -ObjectId "<OBJECT_ID_FROM_1B>" `
+  -ApplicationId "<ACS_IMMUTABLE_RESOURCE_ID_FROM_1A>"
 ```
 
 - [ ] Sync completed without error.

@@ -68,8 +68,13 @@ $inst = New-CsOnlineApplicationInstance `
   -ApplicationId "3c686b4b-6aa0-4255-9799-8533e59605f3" `
   -DisplayName "CallTranskript ACS"
 
-# Sync to make it visible to Teams
-Sync-CsOnlineApplicationInstance -ObjectId $inst.ObjectId
+# Sync to make it visible to Teams.
+# NOTE: -ApplicationId is required as of MicrosoftTeams module ~6.x.
+# Older docs show only -ObjectId, which now errors with
+# "At least one of ApplicationId or AcsResourceId must be provided."
+Sync-CsOnlineApplicationInstance `
+  -ObjectId $inst.ObjectId `
+  -ApplicationId "3c686b4b-6aa0-4255-9799-8533e59605f3"
 
 # Note this ObjectId — you'll need it later
 $inst.ObjectId
