@@ -271,6 +271,7 @@ the call isn't getting past Teams. Diagnostic order:
 | Tenant ID | `d5663c64-53b6-427d-bd45-ad3d3b91764e` |
 | Subscription ID | `0c3d1568-2bf4-4eb6-b037-1b94eb8b5061` |
 | Resource Account UPN to create | `acs-calltranskript@sgb-energie.de` |
+| App Instance ObjectId (captured 2026-05-19) | `69d132bb-ced6-4ad5-82b9-7a9b86d2efb2` |
 | Test DID to assign | `+49 8142 4102506` |
 | Expected caller (Adnan) | `+49 151 424 515 74` |
 | Backend URL (for agent-ui .env.local) | `https://app-calltranskript-backend.azurewebsites.net` |
