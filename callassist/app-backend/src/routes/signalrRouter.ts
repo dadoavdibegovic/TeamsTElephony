@@ -3,7 +3,9 @@ import { buildClientNegotiateResponse } from "../signalr/hub";
 
 export const signalrRouter = Router();
 
-signalrRouter.get("/calltranskript/negotiate", (_req: Request, res: Response) => {
+// The @microsoft/signalr JS client POSTs to <hub>/negotiate; some other
+// integrations still GET. Handle both.
+function handleNegotiate(_req: Request, res: Response): void {
   try {
     const body = buildClientNegotiateResponse();
     res.status(200).json(body);
@@ -12,4 +14,7 @@ signalrRouter.get("/calltranskript/negotiate", (_req: Request, res: Response) =>
     console.error("negotiate failed", err);
     res.status(500).json({ error: message });
   }
-});
+}
+
+signalrRouter.get("/calltranskript/negotiate",  handleNegotiate);
+signalrRouter.post("/calltranskript/negotiate", handleNegotiate);
