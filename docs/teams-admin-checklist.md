@@ -88,14 +88,21 @@ New-CsOnlineApplicationInstance `
 
 ### 1c. Sync the app instance to Teams
 
-> **Microsoft Teams PowerShell ~6.x requires `-ApplicationId`.** Older
-> docs show `-ObjectId` only, which errors out with "At least one of
-> ApplicationId or AcsResourceId must be provided."
+> **Use `-AcsResourceId`, NOT `-ApplicationId`** for ACS-backed app
+> instances. `-ApplicationId` is for Microsoft-provided Teams apps
+> (Call Queue, Auto Attendant). If you put the ACS resource GUID in
+> `-ApplicationId`, Teams substitutes a default Call Queue app and
+> the ACS binding silently fails — the RA looks valid but won't
+> accept routed calls.
+>
+> Verify with `Get-CsOnlineApplicationInstance`:
+> `AcsResourceId` should equal the ACS resource GUID, not the literal
+> string `ACS_Resource_ID_Not_Set`.
 
 ```powershell
 Sync-CsOnlineApplicationInstance `
   -ObjectId "<OBJECT_ID_FROM_1B>" `
-  -ApplicationId "<ACS_IMMUTABLE_RESOURCE_ID_FROM_1A>"
+  -AcsResourceId "<ACS_IMMUTABLE_RESOURCE_ID_FROM_1A>"
 ```
 
 - [ ] Sync completed without error.

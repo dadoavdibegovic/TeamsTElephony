@@ -68,13 +68,18 @@ $inst = New-CsOnlineApplicationInstance `
   -ApplicationId "3c686b4b-6aa0-4255-9799-8533e59605f3" `
   -DisplayName "CallTranskript ACS"
 
-# Sync to make it visible to Teams.
-# NOTE: -ApplicationId is required as of MicrosoftTeams module ~6.x.
-# Older docs show only -ObjectId, which now errors with
-# "At least one of ApplicationId or AcsResourceId must be provided."
+# Sync to make it visible to Teams AND bind it to the ACS resource.
+# CRITICAL: use -AcsResourceId (NOT -ApplicationId) for ACS-backed
+# application instances. -ApplicationId is for Microsoft-provided Teams
+# apps (Call Queue, Auto Attendant). For ACS, the GUID belongs in
+# -AcsResourceId. If you pass it as -ApplicationId, Teams silently
+# substitutes a default Call Queue app and the ACS binding is never
+# made — Get-CsOnlineApplicationInstance will show:
+#   AcsResourceId : ACS_Resource_ID_Not_Set
+# and any call redirected to the RA will fail with "cannot be connected".
 Sync-CsOnlineApplicationInstance `
   -ObjectId $inst.ObjectId `
-  -ApplicationId "3c686b4b-6aa0-4255-9799-8533e59605f3"
+  -AcsResourceId "3c686b4b-6aa0-4255-9799-8533e59605f3"
 
 # Note this ObjectId — you'll need it later
 $inst.ObjectId
