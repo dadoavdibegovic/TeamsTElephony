@@ -30,12 +30,14 @@ You don't need to create these — they exist:
 | Bot Entra app ID | `7607addb-4830-4a98-be37-97ac0ebe3f8c` |
 | Bot Entra app object ID | `7568c75d-3756-4eca-9755-5261f857d3f3` |
 | Bot service principal ID | `daae406e-82a3-455e-bf60-67273ecaf91d` |
-| Graph permissions granted | `Calls.AccessMedia.All`, `Calls.JoinGroupCall.All`, `Calls.JoinGroupCallAsGuest.All`, `Calls.InitiateGroupCall.All` (Application, admin-consented) |
-| Azure Bot Service registration | TBD — to be created by us before you start |
-| Compliance Recording policy in Teams | TBD — applied to test agent before you test |
-| App Service for hosting | Recommend new dedicated plan (the existing `asp-calltranskript-core` is sized for Node.js workloads) |
+| Graph permissions granted | `Calls.AccessMedia.All`, `Calls.JoinGroupCall.All`, `Calls.InitiateGroupCall.All` (Application, admin-consented). `Calls.JoinGroupCallAsGuest.All` is added to the app but not consented — confirm whether you need it; add via portal if so. |
+| Azure Bot Service registration | ✅ `bot-calltranskript-prod` (RG `Call_Transkript_Infra`, SKU F0, kind `azurebot`, Teams channel + calling enabled). Calling webhook is a placeholder you replace after deploying your service. |
+| Compliance Recording policy in Teams | TBD — applied to test agent before you test (via PowerShell, we'll do this after you confirm endpoint URL) |
+| App Service for hosting | You provision (recommend Linux, .NET 8, separate plan from `asp-calltranskript-core`) |
 
-You will need a **client secret** for the bot Entra app. We will create it and share via secure channel.
+**Client secret** for the bot Entra app: already generated and stored in Key Vault `kv-calltranskript-prod` as secret `BotClientSecret`. Reference it from your App Service config as `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BotClientSecret)`.
+
+**Backend ingest secret** (the bearer you send when opening the WebSocket to our backend): stored in Key Vault as `BackendIngestSecret`. Same reference syntax.
 
 ## Existing Node.js backend (already running)
 
@@ -160,15 +162,16 @@ Our backend rejects upgrades without a valid bearer.
 
 ## Configuration via App Service settings (you read these, we provide values)
 
-| Env var | Purpose |
+| Env var | Value / KV reference |
 |---|---|
-| `BOT_APP_ID` | The Entra app ID (`7607addb-…`) |
-| `BOT_TENANT_ID` | Tenant ID |
-| `BOT_CLIENT_SECRET` | Client secret (KV-referenced) |
-| `BOT_MESSAGING_ENDPOINT` | The HTTPS URL Graph will POST notifications to (your bot's incoming-call webhook). Set after deploy. |
-| `BACKEND_INGEST_WSS` | `wss://app-calltranskript-backend.azurewebsites.net/bot/audio` |
-| `BACKEND_INGEST_SECRET` | Bearer token (KV-referenced) |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights for telemetry |
+| `BOT_APP_ID` | `7607addb-4830-4a98-be37-97ac0ebe3f8c` |
+| `BOT_TENANT_ID` | `d5663c64-53b6-427d-bd45-ad3d3b91764e` |
+| `BOT_CLIENT_SECRET` | `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BotClientSecret)` |
+| `BACKEND_INGEST_WSS` | `wss://app-calltranskript-backend.azurewebsites.net/bot/audio` (the path includes `/{correlationId}` at the end per-connection) |
+| `BACKEND_INGEST_SECRET` | `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BackendIngestSecret)` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=AppInsightsConnectionString)` |
+
+Once you deploy your bot, give us the public HTTPS URL of your `/api/calling` endpoint and we'll update the Azure Bot Service `bot-calltranskript-prod` with it (replaces the current placeholder).
 
 ## Telemetry expectations (Application Insights)
 

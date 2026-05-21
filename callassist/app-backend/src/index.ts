@@ -12,6 +12,7 @@ import cors from "cors";
 import { config } from "./config/config";
 import { healthRouter } from "./routes/healthRouter";
 import { signalrRouter } from "./routes/signalrRouter";
+import { attachAudioIngestServer } from "./bot/audioIngestServer";
 
 const app = express();
 
@@ -46,6 +47,8 @@ app.use("/", signalrRouter);
 const server = app.listen(config.app.port, () => {
   console.log(`app-backend listening on port ${config.app.port} (${config.app.nodeEnv})`);
 });
+
+attachAudioIngestServer(server);
 
 process.on("SIGTERM", () => {
   console.log("SIGTERM received — shutting down");
