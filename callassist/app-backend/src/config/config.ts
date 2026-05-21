@@ -5,10 +5,6 @@ function req(k: string): string {
 }
 
 export const config = {
-  acs: {
-    connectionString: req("ACS_CONNECTION_STRING"),
-    callbackBaseUrl:  req("CALLBACK_BASE_URL"),
-  },
   entra: {
     tenantId:     req("ENTRA_TENANT_ID"),
     clientId:     req("ENTRA_CLIENT_ID"),

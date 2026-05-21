@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { callStore } from "../callAutomation/callStore";
+import { callStore } from "../state/callStore";
 
 export const healthRouter = Router();
 
