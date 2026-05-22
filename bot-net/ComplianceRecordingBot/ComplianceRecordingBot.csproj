@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ComplianceRecordingBot</RootNamespace>
+    <AssemblyName>ComplianceRecordingBot</AssemblyName>
+    <!-- Microsoft.Skype.Bots.Media requires linux-x64 or win-x64.
+         For Azure App Service (Linux), set linux-x64. Switch to win-x64 for local Windows dev. -->
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Graph Communications SDK — load-bearing packages -->
+    <!-- NOTE: verify latest stable versions before first build. 1.2.* is current guidance. -->
+    <PackageReference Include="Microsoft.Graph.Communications.Calls" Version="1.2.*" />
+    <PackageReference Include="Microsoft.Graph.Communications.Calls.Media" Version="1.2.*" />
+    <PackageReference Include="Microsoft.Graph.Communications.Client" Version="1.2.*" />
+    <PackageReference Include="Microsoft.Graph.Communications.Common" Version="1.2.*" />
+    <PackageReference Include="Microsoft.Skype.Bots.Media" Version="1.32.*" />
+
+    <!-- Azure / secrets -->
+    <PackageReference Include="Azure.Identity" Version="*" />
+    <PackageReference Include="Azure.Security.KeyVault.Secrets" Version="*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="*" />
+
+    <!-- Telemetry -->
+    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" Version="*" />
+  </ItemGroup>
+
+</Project>
