@@ -166,7 +166,7 @@ Our backend rejects upgrades without a valid bearer.
 |---|---|
 | `BOT_APP_ID` | `7607addb-4830-4a98-be37-97ac0ebe3f8c` |
 | `BOT_TENANT_ID` | `d5663c64-53b6-427d-bd45-ad3d3b91764e` |
-| `BOT_CLIENT_SECRET` | `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BotClientSecret)` |
+| `Bot__AppSecret` | `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BotClientSecret)` |
 | `BACKEND_INGEST_WSS` | `wss://app-calltranskript-backend.azurewebsites.net/bot/audio` (the path includes `/{correlationId}` at the end per-connection) |
 | `BACKEND_INGEST_SECRET` | `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BackendIngestSecret)` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | `@Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=AppInsightsConnectionString)` |
