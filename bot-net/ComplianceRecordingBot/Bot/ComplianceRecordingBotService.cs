@@ -187,39 +187,134 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
 
     private void InitializeMediaPlatform(IGraphLogger graphLogger)
     {
-        // TODO (Session 3): populate with real IP, port, and TLS cert from config.
-        // The MediaPlatform must be initialized with the host's public IP and a TLS
-        // cert so the Skype media transport can establish SRTP sessions.
-        // For now: guard with a try/catch so the bot can still start for non-media
-        // tests (health check, auth rejection check, etc.).
-        //
-        // Real values needed (from Azure App Service instance or local machine):
-        //   InstancePublicIPAddress — the public IP of this app instance
-        //   CertificateThumbprint   — a TLS cert registered in the OS cert store
-        //   InstancePublicPort      — the HTTPS port (443 for App Service)
+        // Skip if ServiceCname is unset or still a placeholder.
+        if (string.IsNullOrWhiteSpace(_botConfig.ServiceCname) ||
+            _botConfig.ServiceCname.Contains("<"))
+        {
+            _logger.LogWarning(
+                "MediaPlatform initialization skipped: Bot:ServiceCname is not configured. " +
+                "Set Bot__ServiceCname in App Service settings to the deployed hostname.");
+            return;
+        }
+
         try
         {
-            // Skip media platform initialization if not configured.
-            // In production, these will be set via App Service config.
-            if (string.IsNullOrWhiteSpace(_botConfig.ServiceCname) ||
-                _botConfig.ServiceCname.Contains("<your-devtunnel>"))
+            // ── Resolve public IP ────────────────────────────────────────────────
+            // App Service Linux does not expose the instance's public IP as an environment
+            // variable. We resolve it via DNS at startup. The Graph Communications SDK
+            // requires a real IPAddress in MediaPlatformInstanceSettings.
+            // This runs synchronously at startup (blocking is acceptable here — we're in
+            // IHostedService.StartAsync, called once before the app accepts traffic).
+            var addresses = System.Net.Dns.GetHostAddresses(_botConfig.ServiceCname);
+            var publicIp = addresses.FirstOrDefault(a =>
+                a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+
+            if (publicIp is null)
             {
                 _logger.LogWarning(
-                    "MediaPlatform initialization skipped: ServiceCname is not set. " +
-                    "Set Bot:ServiceCname and Bot:MediaServiceCertSubject to enable real media sessions.");
+                    "MediaPlatform initialization skipped: could not resolve IPv4 for {Cname}. " +
+                    "Bot will handle Graph notifications but media sessions won't work until " +
+                    "DNS resolves to a reachable IPv4 address.",
+                    _botConfig.ServiceCname);
                 return;
             }
 
-            // We do NOT call MediaPlatform.Initialize here because we need the real
-            // public IP and cert thumbprint — both runtime/environment values.
-            // The actual Initialize call lives in Session 3 once we have those.
             _logger.LogInformation(
-                "MediaPlatform init deferred to Session 3 (needs public IP + TLS cert). " +
-                "Bot can still receive Graph notifications and return proper HTTP responses.");
+                "MediaPlatform resolved public IP {Ip} for {Cname}",
+                publicIp, _botConfig.ServiceCname);
+
+            // ── Cert thumbprint ──────────────────────────────────────────────────
+            // App Service managed certs do not expose their thumbprint to the process
+            // via a standard env var when using the *.azurewebsites.net hostname
+            // (only uploaded custom-domain certs appear in WEBSITE_LOAD_CERTIFICATES).
+            //
+            // Resolution options (in priority order):
+            //   1. If Bot:MediaServiceCertThumbprint is set in App Service config → use it.
+            //      Provision via: az webapp config appsettings set ... Bot__MediaServiceCertThumbprint=<thumb>
+            //      after uploading a pfx to the App Service cert store.
+            //   2. Attempt to read WEBSITE_LOAD_CERTIFICATES env var (only works for custom domain certs).
+            //   3. If neither is set → log a TODO and skip media platform init.
+            //      The bot will still receive Graph notifications and answer calls without media.
+            //
+            // NOTE: For the *.azurewebsites.net hostname, Microsoft's media SDK documentation
+            // (and the compliance recording sample README) notes that a custom domain + cert is
+            // required for production media bots. The managed cert covers the hostname for
+            // HTTP/2 but the MediaPlatform SDK needs the cert loaded into the OS store with
+            // a thumbprint it can reference. This is a one-time provisioning step.
+            //
+            // TODO (Session 4 / Adnan action): Upload a pfx to the App Service cert store
+            // for app-bot-calltranskript.azurewebsites.net (or a custom domain), set
+            // Bot__MediaServiceCertThumbprint to the pfx thumbprint, and add the thumbprint
+            // to WEBSITE_LOAD_CERTIFICATES so App Service loads it into the certificate store.
+            // See: https://learn.microsoft.com/azure/app-service/configure-ssl-certificate-in-code
+
+            var certThumbprint = _botConfig.MediaServiceCertThumbprint;
+
+            if (string.IsNullOrWhiteSpace(certThumbprint))
+            {
+                // Fallback: try WEBSITE_LOAD_CERTIFICATES (first thumbprint in the list).
+                var loadCerts = Environment.GetEnvironmentVariable("WEBSITE_LOAD_CERTIFICATES");
+                if (!string.IsNullOrWhiteSpace(loadCerts))
+                {
+                    certThumbprint = loadCerts.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(t => t.Trim())
+                        .FirstOrDefault(t => t.Length == 40); // SHA-1 thumbprint is 40 hex chars
+                    if (!string.IsNullOrWhiteSpace(certThumbprint))
+                    {
+                        _logger.LogInformation(
+                            "MediaPlatform: using cert thumbprint from WEBSITE_LOAD_CERTIFICATES: {Thumbprint}",
+                            certThumbprint);
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(certThumbprint))
+            {
+                // TODO: Cert thumbprint not configured. Media sessions will not work until
+                // this is resolved. See comment block above for the provisioning steps.
+                _logger.LogWarning(
+                    "MediaPlatform initialization skipped: no TLS cert thumbprint available. " +
+                    "Set Bot__MediaServiceCertThumbprint in App Service settings after uploading " +
+                    "a certificate to the App Service cert store. " +
+                    "See docs/bot-implementation-guide.md §8 and Azure docs for configure-ssl-certificate-in-code.");
+                return;
+            }
+
+            // ── MediaPlatform.Initialize() ───────────────────────────────────────
+            // Port: App Service routes 443 externally to the internal port (WEBSITES_PORT).
+            // The media SDK needs both public and internal port values.
+            // For App Service, the internal port is the same as WEBSITES_PORT (9442).
+            // The public port is 443 (standard HTTPS).
+            const int internalPort = 9442;
+            const int publicPort = 443;
+
+            var mediaPlatformSettings = new MediaPlatformSettings
+            {
+                MediaPlatformInstanceSettings = new MediaPlatformInstanceSettings
+                {
+                    CertificateThumbprint = certThumbprint,
+                    InstanceInternalPort = internalPort,
+                    InstancePublicIPAddress = publicIp,
+                    InstancePublicPort = publicPort,
+                    ServiceFqdn = _botConfig.ServiceCname,
+                },
+                ApplicationId = _botConfig.AppId,
+            };
+
+            MediaPlatform.Initialize(mediaPlatformSettings);
+
+            _logger.LogInformation(
+                "MediaPlatform initialized. Fqdn={Fqdn} PublicIp={Ip} PublicPort={Port} CertThumbprint={Cert}",
+                _botConfig.ServiceCname, publicIp, publicPort, certThumbprint[..8] + "...");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "MediaPlatform initialization failed");
+            // Media platform init failure is not fatal for the bot's HTTP/notification path.
+            // Log the error and continue — the bot can still receive Graph notifications
+            // and return proper HTTP responses. Media sessions will fail until this is fixed.
+            _logger.LogError(ex,
+                "MediaPlatform initialization failed. Bot will handle Graph notifications " +
+                "but media sessions won't work. Check cert + IP configuration.");
         }
     }
 

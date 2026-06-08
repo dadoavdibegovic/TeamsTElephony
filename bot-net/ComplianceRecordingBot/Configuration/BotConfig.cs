@@ -36,9 +36,19 @@ public class BotConfig
     public int MediaInstanceCapacity { get; set; } = 20;
 
     /// <summary>
-    /// Certificate subject for the media service TLS certificate.
-    /// Leave empty to use the default App Service cert.
-    /// TODO (Session 2): configure once media workload is wired.
+    /// SHA-1 thumbprint (40 hex chars, no colons) of the TLS certificate loaded into the
+    /// App Service certificate store for the media platform.
+    ///
+    /// Required for MediaPlatform.Initialize() — the Skype.Bots.Media SDK locates the cert
+    /// in the OS certificate store by thumbprint, not by subject.
+    ///
+    /// How to set:
+    ///   1. Upload a PFX to the App Service (Portal → TLS/SSL → Private Key Certificates → Upload).
+    ///   2. Add the thumbprint to WEBSITE_LOAD_CERTIFICATES so App Service loads it into the store.
+    ///   3. Set Bot__MediaServiceCertThumbprint to the thumbprint value.
+    ///
+    /// Leave empty to skip MediaPlatform.Initialize() (bot will handle Graph notifications
+    /// but media sessions won't work). This is the expected state before a cert is provisioned.
     /// </summary>
-    public string MediaServiceCertSubject { get; set; } = string.Empty;
+    public string MediaServiceCertThumbprint { get; set; } = string.Empty;
 }
