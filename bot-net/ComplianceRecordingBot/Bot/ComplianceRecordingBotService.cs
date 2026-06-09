@@ -292,13 +292,37 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
             // object ourselves and pass it via MediaPlatformInstanceSettings.Certificate.
             //
             // Search order:
+            //   0. Bot:MediaCertPfxBase64 — KV-stored PFX bytes (most portable, preferred)
             //   1. /var/ssl/private/<THUMBPRINT>.p8 — Linux App Service WEBSITE_LOAD_CERTIFICATES
             //   2. CurrentUser\My store — works on both Linux and Windows
             //   3. LocalMachine\My store — Windows only (also used in dev)
             System.Security.Cryptography.X509Certificates.X509Certificate2? cert = null;
 
+            // 0. KV-stored PFX base64 (primary path — bypasses cert store entirely)
+            if (!string.IsNullOrWhiteSpace(_botConfig.MediaCertPfxBase64))
+            {
+                try
+                {
+                    var pfxBytes = Convert.FromBase64String(_botConfig.MediaCertPfxBase64);
+                    cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(
+                        pfxBytes,
+                        _botConfig.MediaCertPfxPassword,
+                        System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.MachineKeySet |
+                        System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable);
+                    _logger.LogInformation(
+                        "MediaPlatform cert loaded from Bot__MediaCertPfxBase64 (thumbprint: {Thumbprint})",
+                        cert.Thumbprint);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to load cert from Bot__MediaCertPfxBase64; falling back to file/store methods.");
+                    cert = null;
+                }
+            }
+
             // 1. Linux App Service file path (WEBSITE_LOAD_CERTIFICATES on Linux)
-            if (!OperatingSystem.IsWindows())
+            if (cert is null && !OperatingSystem.IsWindows())
             {
                 // Thumbprint in the filename is uppercase with no colons, matching our value.
                 var p8Path = $"/var/ssl/private/{certThumbprint.ToUpperInvariant()}.p8";
@@ -373,8 +397,8 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
             }
 
             _logger.LogInformation(
-                "MediaPlatform cert loaded from store. Subject={Subject} Thumbprint={Thumbprint8}... HasPrivateKey={HasKey}",
-                cert.Subject, certThumbprint[..8], cert.HasPrivateKey);
+                "MediaPlatform cert ready. Subject={Subject} Thumbprint={Thumbprint8}... HasPrivateKey={HasKey}",
+                cert.Subject, cert.Thumbprint[..8], cert.HasPrivateKey);
 
             // ── MediaPlatform.Initialize() ───────────────────────────────────────
             // Port: App Service routes 443 externally to the internal port (WEBSITES_PORT).
@@ -403,7 +427,7 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
 
             _logger.LogInformation(
                 "MediaPlatform.Initialize succeeded. Fqdn={Fqdn} PublicIp={Ip} PublicPort={Port} CertThumbprint={Cert}",
-                _botConfig.ServiceCname, publicIp, publicPort, certThumbprint[..8] + "...");
+                _botConfig.ServiceCname, publicIp, publicPort, cert.Thumbprint[..8] + "...");
         }
         catch (Exception ex)
         {

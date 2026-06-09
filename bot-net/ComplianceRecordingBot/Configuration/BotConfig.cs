@@ -49,6 +49,24 @@ public class BotConfig
     ///
     /// Leave empty to skip MediaPlatform.Initialize() (bot will handle Graph notifications
     /// but media sessions won't work). This is the expected state before a cert is provisioned.
+    ///
+    /// Superseded by MediaCertPfxBase64 + MediaCertPfxPassword when those are set.
+    /// Kept as a rollback path.
     /// </summary>
     public string MediaServiceCertThumbprint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Base64-encoded PFX bytes for the MediaPlatform TLS certificate.
+    /// Sourced from KV reference: @Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BotMediaCertPfx)
+    ///
+    /// When non-empty, this is the primary cert load path — bypasses WEBSITE_LOAD_CERTIFICATES
+    /// and X509Store entirely (works reliably on Linux App Service containers).
+    /// </summary>
+    public string MediaCertPfxBase64 { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Password for the PFX referenced by MediaCertPfxBase64.
+    /// Sourced from KV reference: @Microsoft.KeyVault(VaultName=kv-calltranskript-prod;SecretName=BotMediaCertPfxPassword)
+    /// </summary>
+    public string MediaCertPfxPassword { get; set; } = string.Empty;
 }
