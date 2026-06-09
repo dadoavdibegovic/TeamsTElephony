@@ -223,82 +223,18 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
                 "MediaPlatform resolved public IP {Ip} for {Cname}",
                 publicIp, _botConfig.ServiceCname);
 
-            // ── Cert thumbprint ──────────────────────────────────────────────────
-            // App Service managed certs do not expose their thumbprint to the process
-            // via a standard env var when using the *.azurewebsites.net hostname
-            // (only uploaded custom-domain certs appear in WEBSITE_LOAD_CERTIFICATES).
+            // ── Load cert (search order — first non-null wins) ───────────────────
             //
-            // Resolution options (in priority order):
-            //   1. If Bot:MediaServiceCertThumbprint is set in App Service config → use it.
-            //      Provision via: az webapp config appsettings set ... Bot__MediaServiceCertThumbprint=<thumb>
-            //      after uploading a pfx to the App Service cert store.
-            //   2. Attempt to read WEBSITE_LOAD_CERTIFICATES env var (only works for custom domain certs).
-            //   3. If neither is set → log a TODO and skip media platform init.
-            //      The bot will still receive Graph notifications and answer calls without media.
-            //
-            // NOTE: For the *.azurewebsites.net hostname, Microsoft's media SDK documentation
-            // (and the compliance recording sample README) notes that a custom domain + cert is
-            // required for production media bots. The managed cert covers the hostname for
-            // HTTP/2 but the MediaPlatform SDK needs the cert loaded into the OS store with
-            // a thumbprint it can reference. This is a one-time provisioning step.
-            //
-            // TODO (Session 4 / Adnan action): Upload a pfx to the App Service cert store
-            // for app-bot-calltranskript.azurewebsites.net (or a custom domain), set
-            // Bot__MediaServiceCertThumbprint to the pfx thumbprint, and add the thumbprint
-            // to WEBSITE_LOAD_CERTIFICATES so App Service loads it into the certificate store.
-            // See: https://learn.microsoft.com/azure/app-service/configure-ssl-certificate-in-code
-
-            var certThumbprint = _botConfig.MediaServiceCertThumbprint;
-
-            if (string.IsNullOrWhiteSpace(certThumbprint))
-            {
-                // Fallback: try WEBSITE_LOAD_CERTIFICATES (first thumbprint in the list).
-                var loadCerts = Environment.GetEnvironmentVariable("WEBSITE_LOAD_CERTIFICATES");
-                if (!string.IsNullOrWhiteSpace(loadCerts))
-                {
-                    certThumbprint = loadCerts.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                        .Select(t => t.Trim())
-                        .FirstOrDefault(t => t.Length == 40); // SHA-1 thumbprint is 40 hex chars
-                    if (!string.IsNullOrWhiteSpace(certThumbprint))
-                    {
-                        _logger.LogInformation(
-                            "MediaPlatform: using cert thumbprint from WEBSITE_LOAD_CERTIFICATES: {Thumbprint}",
-                            certThumbprint);
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(certThumbprint))
-            {
-                // TODO: Cert thumbprint not configured. Media sessions will not work until
-                // this is resolved. See comment block above for the provisioning steps.
-                _logger.LogWarning(
-                    "MediaPlatform initialization skipped: no TLS cert thumbprint available. " +
-                    "Set Bot__MediaServiceCertThumbprint in App Service settings after uploading " +
-                    "a certificate to the App Service cert store. " +
-                    "See docs/bot-implementation-guide.md §8 and Azure docs for configure-ssl-certificate-in-code.");
-                return;
-            }
-
-            // ── Load cert from store or file ────────────────────────────────────
-            // On Linux (Azure App Service), WEBSITE_LOAD_CERTIFICATES behaviour:
-            //   - Places the PFX at /var/ssl/private/<THUMBPRINT>.p8 as a PEM-encoded file
-            //   - Does NOT populate the .NET X509Store (CurrentUser\My or LocalMachine\My)
-            //   - LocalMachine\My is read-only on Linux (Root/CA only) — throws
-            //     PlatformNotSupportedException if written to.
-            //
-            // The Skype.Bots.Media CertificateManager.GetCertificateByThumbprint opens
-            // LocalMachine\My which fails on Linux. So we pre-load the X509Certificate2
-            // object ourselves and pass it via MediaPlatformInstanceSettings.Certificate.
-            //
-            // Search order:
-            //   0. Bot:MediaCertPfxBase64 — KV-stored PFX bytes (most portable, preferred)
+            //   0. Bot:MediaCertPfxBase64 (KV ref) — most portable, bypasses cert store entirely.
+            //      No thumbprint needed; thumbprint is read from the loaded cert object.
             //   1. /var/ssl/private/<THUMBPRINT>.p8 — Linux App Service WEBSITE_LOAD_CERTIFICATES
-            //   2. CurrentUser\My store — works on both Linux and Windows
-            //   3. LocalMachine\My store — Windows only (also used in dev)
+            //   2. CurrentUser\My X509 store
+            //   3. LocalMachine\My X509 store (Windows only)
+            //
+            // Paths 1-3 require a thumbprint. Path 0 does not.
             System.Security.Cryptography.X509Certificates.X509Certificate2? cert = null;
 
-            // 0. KV-stored PFX base64 (primary path — bypasses cert store entirely)
+            // 0. KV-stored PFX base64 — primary path, works on Linux and Windows
             if (!string.IsNullOrWhiteSpace(_botConfig.MediaCertPfxBase64))
             {
                 try
@@ -321,79 +257,107 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
                 }
             }
 
-            // 1. Linux App Service file path (WEBSITE_LOAD_CERTIFICATES on Linux)
-            if (cert is null && !OperatingSystem.IsWindows())
+            // Paths 1-3 need a thumbprint — resolve it only if PFX path didn't load a cert.
+            if (cert is null)
             {
-                // Thumbprint in the filename is uppercase with no colons, matching our value.
-                var p8Path = $"/var/ssl/private/{certThumbprint.ToUpperInvariant()}.p8";
-                if (File.Exists(p8Path))
+                var certThumbprint = _botConfig.MediaServiceCertThumbprint;
+
+                if (string.IsNullOrWhiteSpace(certThumbprint))
                 {
-                    try
+                    // Fallback: try WEBSITE_LOAD_CERTIFICATES (first thumbprint in the list).
+                    var loadCerts = Environment.GetEnvironmentVariable("WEBSITE_LOAD_CERTIFICATES");
+                    if (!string.IsNullOrWhiteSpace(loadCerts))
                     {
-                        // .p8 on App Service Linux is PEM-encoded (not a real PKCS#8 file).
-                        // X509Certificate2 can load PEM directly in .NET 5+.
-                        cert = System.Security.Cryptography.X509Certificates.X509Certificate2
-                            .CreateFromPemFile(p8Path);
+                        certThumbprint = loadCerts.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                            .Select(t => t.Trim())
+                            .FirstOrDefault(t => t.Length == 40) ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(certThumbprint))
+                            _logger.LogInformation(
+                                "MediaPlatform: using cert thumbprint from WEBSITE_LOAD_CERTIFICATES: {Thumbprint}",
+                                certThumbprint);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(certThumbprint))
+                {
+                    _logger.LogWarning(
+                        "MediaPlatform initialization skipped: no TLS cert available. " +
+                        "Set Bot__MediaCertPfxBase64 (KV ref) or Bot__MediaServiceCertThumbprint. " +
+                        "See docs/bot-implementation-guide.md for cert provisioning steps.");
+                    return;
+                }
+
+                // 1. Linux App Service file path
+                if (cert is null && !OperatingSystem.IsWindows())
+                {
+                    var p8Path = $"/var/ssl/private/{certThumbprint.ToUpperInvariant()}.p8";
+                    if (File.Exists(p8Path))
+                    {
+                        try
+                        {
+                            cert = System.Security.Cryptography.X509Certificates.X509Certificate2
+                                .CreateFromPemFile(p8Path);
+                            _logger.LogInformation(
+                                "MediaPlatform cert loaded from file {Path}. HasPrivateKey={HasKey}",
+                                p8Path, cert.HasPrivateKey);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex,
+                                "Failed to load cert from {Path}; will fall back to X509Store.", p8Path);
+                        }
+                    }
+                    else
+                    {
                         _logger.LogInformation(
-                            "MediaPlatform cert loaded from file {Path}. HasPrivateKey={HasKey}",
-                            p8Path, cert.HasPrivateKey);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex,
-                            "Failed to load cert from {Path}; will fall back to X509Store.", p8Path);
+                            "MediaPlatform cert file not found at {Path}; will try X509Store.", p8Path);
                     }
                 }
-                else
+
+                // 2. CurrentUser\My store
+                if (cert is null)
                 {
-                    _logger.LogInformation(
-                        "MediaPlatform cert file not found at {Path}; will try X509Store.", p8Path);
+                    using var store = new System.Security.Cryptography.X509Certificates.X509Store(
+                        System.Security.Cryptography.X509Certificates.StoreName.My,
+                        System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser);
+                    store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
+                    var found = store.Certificates.Find(
+                        System.Security.Cryptography.X509Certificates.X509FindType.FindByThumbprint,
+                        certThumbprint, validOnly: false);
+                    cert = found.Count > 0 ? found[0] : null;
+                    if (cert is not null)
+                        _logger.LogInformation(
+                            "MediaPlatform cert loaded from CurrentUser\\My store. HasPrivateKey={HasKey}",
+                            cert.HasPrivateKey);
                 }
-            }
 
-            // 2. CurrentUser\My store (works on Linux and Windows)
-            if (cert is null)
-            {
-                using var store = new System.Security.Cryptography.X509Certificates.X509Store(
-                    System.Security.Cryptography.X509Certificates.StoreName.My,
-                    System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser);
-                store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
-                var found = store.Certificates.Find(
-                    System.Security.Cryptography.X509Certificates.X509FindType.FindByThumbprint,
-                    certThumbprint, validOnly: false);
-                cert = found.Count > 0 ? found[0] : null;
-                if (cert is not null)
-                    _logger.LogInformation(
-                        "MediaPlatform cert loaded from CurrentUser\\My store. HasPrivateKey={HasKey}",
-                        cert.HasPrivateKey);
-            }
+                // 3. LocalMachine\My store (Windows only)
+                if (cert is null && OperatingSystem.IsWindows())
+                {
+                    using var store = new System.Security.Cryptography.X509Certificates.X509Store(
+                        System.Security.Cryptography.X509Certificates.StoreName.My,
+                        System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine);
+                    store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
+                    var found = store.Certificates.Find(
+                        System.Security.Cryptography.X509Certificates.X509FindType.FindByThumbprint,
+                        certThumbprint, validOnly: false);
+                    cert = found.Count > 0 ? found[0] : null;
+                    if (cert is not null)
+                        _logger.LogInformation(
+                            "MediaPlatform cert loaded from LocalMachine\\My store. HasPrivateKey={HasKey}",
+                            cert.HasPrivateKey);
+                }
 
-            // 3. LocalMachine\My store (Windows dev / prod environments)
-            if (cert is null && OperatingSystem.IsWindows())
-            {
-                using var store = new System.Security.Cryptography.X509Certificates.X509Store(
-                    System.Security.Cryptography.X509Certificates.StoreName.My,
-                    System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine);
-                store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
-                var found = store.Certificates.Find(
-                    System.Security.Cryptography.X509Certificates.X509FindType.FindByThumbprint,
-                    certThumbprint, validOnly: false);
-                cert = found.Count > 0 ? found[0] : null;
-                if (cert is not null)
-                    _logger.LogInformation(
-                        "MediaPlatform cert loaded from LocalMachine\\My store. HasPrivateKey={HasKey}",
-                        cert.HasPrivateKey);
-            }
-
-            if (cert is null)
-            {
-                _logger.LogError(
-                    "MediaPlatform initialization aborted: certificate with thumbprint {Thumbprint} " +
-                    "not found in /var/ssl/private/<thumbprint>.p8, CurrentUser\\My{Platform}. " +
-                    "Ensure WEBSITE_LOAD_CERTIFICATES is set to that thumbprint and the app has restarted.",
-                    certThumbprint,
-                    OperatingSystem.IsWindows() ? " or LocalMachine\\My" : string.Empty);
-                return;
+                if (cert is null)
+                {
+                    _logger.LogError(
+                        "MediaPlatform initialization aborted: certificate with thumbprint {Thumbprint} " +
+                        "not found in /var/ssl/private/<thumbprint>.p8, CurrentUser\\My{Platform}. " +
+                        "Ensure WEBSITE_LOAD_CERTIFICATES is set to that thumbprint and the app has restarted.",
+                        certThumbprint,
+                        OperatingSystem.IsWindows() ? " or LocalMachine\\My" : string.Empty);
+                    return;
+                }
             }
 
             _logger.LogInformation(

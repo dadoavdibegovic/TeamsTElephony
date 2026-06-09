@@ -6,13 +6,22 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Kestrel port binding ─────────────────────────────────────────────────────
-// Azure App Service (Linux) tells us which port to bind via the PORT environment
-// variable. WEBSITES_PORT in App Service settings is re-exported as PORT by the
-// platform host. We must listen on this port or App Service's health probe will fail.
-// Fallback to 9442 for local dev (matches WEBSITES_PORT setting and launchSettings).
+// Port source depends on hosting context:
+//
+//   Windows App Service outofprocess (IIS reverse proxy):
+//     IIS sets ASPNETCORE_PORT to a random loopback port per process startup.
+//     We must NOT pass a fixed port — read ASPNETCORE_PORT if present (set by IIS),
+//     otherwise fall back to PORT / WEBSITES_PORT (Linux App Service) or 9442 (local dev).
+//
+//   Linux App Service (container):
+//     Platform sets PORT (re-export of WEBSITES_PORT). Must listen on that port.
+//
+//   Local dev:
+//     No PORT / ASPNETCORE_PORT — fall back to 9442.
 var port = int.TryParse(
-    Environment.GetEnvironmentVariable("PORT") ??
-    Environment.GetEnvironmentVariable("WEBSITES_PORT"),
+    Environment.GetEnvironmentVariable("ASPNETCORE_PORT") ??   // Windows IIS outofprocess
+    Environment.GetEnvironmentVariable("PORT") ??              // Linux App Service container
+    Environment.GetEnvironmentVariable("WEBSITES_PORT"),       // App Service setting (fallback)
     out var p) ? p : 9442;
 
 builder.WebHost.ConfigureKestrel(options =>
