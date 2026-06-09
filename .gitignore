@@ -6,6 +6,7 @@ dist/
 # .NET / bot-net
 bot-net/**/bin/
 bot-net/**/obj/
+bot-net/**/publish/
 bot-net/**/*.user
 bot-net/.vs/
 bot-net/**/*.pubxml

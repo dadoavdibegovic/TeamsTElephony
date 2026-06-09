@@ -280,6 +280,102 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
                 return;
             }
 
+            // ── Load cert from store or file ────────────────────────────────────
+            // On Linux (Azure App Service), WEBSITE_LOAD_CERTIFICATES behaviour:
+            //   - Places the PFX at /var/ssl/private/<THUMBPRINT>.p8 as a PEM-encoded file
+            //   - Does NOT populate the .NET X509Store (CurrentUser\My or LocalMachine\My)
+            //   - LocalMachine\My is read-only on Linux (Root/CA only) — throws
+            //     PlatformNotSupportedException if written to.
+            //
+            // The Skype.Bots.Media CertificateManager.GetCertificateByThumbprint opens
+            // LocalMachine\My which fails on Linux. So we pre-load the X509Certificate2
+            // object ourselves and pass it via MediaPlatformInstanceSettings.Certificate.
+            //
+            // Search order:
+            //   1. /var/ssl/private/<THUMBPRINT>.p8 — Linux App Service WEBSITE_LOAD_CERTIFICATES
+            //   2. CurrentUser\My store — works on both Linux and Windows
+            //   3. LocalMachine\My store — Windows only (also used in dev)
+            System.Security.Cryptography.X509Certificates.X509Certificate2? cert = null;
+
+            // 1. Linux App Service file path (WEBSITE_LOAD_CERTIFICATES on Linux)
+            if (!OperatingSystem.IsWindows())
+            {
+                // Thumbprint in the filename is uppercase with no colons, matching our value.
+                var p8Path = $"/var/ssl/private/{certThumbprint.ToUpperInvariant()}.p8";
+                if (File.Exists(p8Path))
+                {
+                    try
+                    {
+                        // .p8 on App Service Linux is PEM-encoded (not a real PKCS#8 file).
+                        // X509Certificate2 can load PEM directly in .NET 5+.
+                        cert = System.Security.Cryptography.X509Certificates.X509Certificate2
+                            .CreateFromPemFile(p8Path);
+                        _logger.LogInformation(
+                            "MediaPlatform cert loaded from file {Path}. HasPrivateKey={HasKey}",
+                            p8Path, cert.HasPrivateKey);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "Failed to load cert from {Path}; will fall back to X509Store.", p8Path);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "MediaPlatform cert file not found at {Path}; will try X509Store.", p8Path);
+                }
+            }
+
+            // 2. CurrentUser\My store (works on Linux and Windows)
+            if (cert is null)
+            {
+                using var store = new System.Security.Cryptography.X509Certificates.X509Store(
+                    System.Security.Cryptography.X509Certificates.StoreName.My,
+                    System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser);
+                store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
+                var found = store.Certificates.Find(
+                    System.Security.Cryptography.X509Certificates.X509FindType.FindByThumbprint,
+                    certThumbprint, validOnly: false);
+                cert = found.Count > 0 ? found[0] : null;
+                if (cert is not null)
+                    _logger.LogInformation(
+                        "MediaPlatform cert loaded from CurrentUser\\My store. HasPrivateKey={HasKey}",
+                        cert.HasPrivateKey);
+            }
+
+            // 3. LocalMachine\My store (Windows dev / prod environments)
+            if (cert is null && OperatingSystem.IsWindows())
+            {
+                using var store = new System.Security.Cryptography.X509Certificates.X509Store(
+                    System.Security.Cryptography.X509Certificates.StoreName.My,
+                    System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine);
+                store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
+                var found = store.Certificates.Find(
+                    System.Security.Cryptography.X509Certificates.X509FindType.FindByThumbprint,
+                    certThumbprint, validOnly: false);
+                cert = found.Count > 0 ? found[0] : null;
+                if (cert is not null)
+                    _logger.LogInformation(
+                        "MediaPlatform cert loaded from LocalMachine\\My store. HasPrivateKey={HasKey}",
+                        cert.HasPrivateKey);
+            }
+
+            if (cert is null)
+            {
+                _logger.LogError(
+                    "MediaPlatform initialization aborted: certificate with thumbprint {Thumbprint} " +
+                    "not found in /var/ssl/private/<thumbprint>.p8, CurrentUser\\My{Platform}. " +
+                    "Ensure WEBSITE_LOAD_CERTIFICATES is set to that thumbprint and the app has restarted.",
+                    certThumbprint,
+                    OperatingSystem.IsWindows() ? " or LocalMachine\\My" : string.Empty);
+                return;
+            }
+
+            _logger.LogInformation(
+                "MediaPlatform cert loaded from store. Subject={Subject} Thumbprint={Thumbprint8}... HasPrivateKey={HasKey}",
+                cert.Subject, certThumbprint[..8], cert.HasPrivateKey);
+
             // ── MediaPlatform.Initialize() ───────────────────────────────────────
             // Port: App Service routes 443 externally to the internal port (WEBSITES_PORT).
             // The media SDK needs both public and internal port values.
@@ -292,7 +388,9 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
             {
                 MediaPlatformInstanceSettings = new MediaPlatformInstanceSettings
                 {
-                    CertificateThumbprint = certThumbprint,
+                    // Pass the pre-loaded X509Certificate2 object directly so the SDK does
+                    // NOT attempt to open LocalMachine\My (unsupported on Linux).
+                    Certificate = cert,
                     InstanceInternalPort = internalPort,
                     InstancePublicIPAddress = publicIp,
                     InstancePublicPort = publicPort,
@@ -304,7 +402,7 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
             MediaPlatform.Initialize(mediaPlatformSettings);
 
             _logger.LogInformation(
-                "MediaPlatform initialized. Fqdn={Fqdn} PublicIp={Ip} PublicPort={Port} CertThumbprint={Cert}",
+                "MediaPlatform.Initialize succeeded. Fqdn={Fqdn} PublicIp={Ip} PublicPort={Port} CertThumbprint={Cert}",
                 _botConfig.ServiceCname, publicIp, publicPort, certThumbprint[..8] + "...");
         }
         catch (Exception ex)
