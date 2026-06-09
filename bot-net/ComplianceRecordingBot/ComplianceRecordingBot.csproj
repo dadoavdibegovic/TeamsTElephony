@@ -11,8 +11,8 @@
       (linux-x64), but only the Windows variant works in Azure App Service because the
       SDK uses COM/Win32 internals at runtime. RuntimeIdentifier is NOT set here so that
       local Windows dev builds work without explicit flags. For Azure App Service (Windows
-      P2v3) publish, pass -r win-x64 --self-contained false on the command line.
-      DO NOT target linux-x64 — MediaPlatform.Initialize will throw DllNotFoundException.
+      P2v3) publish, pass: -r win-x64 -p:SelfContained=false on the command line.
+      NOTE: Do not target linux-x64 as MediaPlatform.Initialize will throw DllNotFoundException.
     -->
   </PropertyGroup>
 
