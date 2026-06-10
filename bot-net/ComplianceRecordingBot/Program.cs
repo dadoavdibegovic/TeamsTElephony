@@ -1,36 +1,8 @@
 using ComplianceRecordingBot.Authentication;
 using ComplianceRecordingBot.Bot;
 using ComplianceRecordingBot.Configuration;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 
 var builder = WebApplication.CreateBuilder(args);
-
-// ── Kestrel port binding ─────────────────────────────────────────────────────
-// Port source depends on hosting context:
-//
-//   Windows App Service outofprocess (IIS reverse proxy):
-//     IIS sets ASPNETCORE_PORT to a random loopback port per process startup.
-//     We must NOT pass a fixed port — read ASPNETCORE_PORT if present (set by IIS),
-//     otherwise fall back to PORT / WEBSITES_PORT (Linux App Service) or 9442 (local dev).
-//
-//   Linux App Service (container):
-//     Platform sets PORT (re-export of WEBSITES_PORT). Must listen on that port.
-//
-//   Local dev:
-//     No PORT / ASPNETCORE_PORT — fall back to 9442.
-var port = int.TryParse(
-    Environment.GetEnvironmentVariable("ASPNETCORE_PORT") ??   // Windows IIS outofprocess
-    Environment.GetEnvironmentVariable("PORT") ??              // Linux App Service container
-    Environment.GetEnvironmentVariable("WEBSITES_PORT"),       // App Service setting (fallback)
-    out var p) ? p : 9442;
-
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.ListenAnyIP(port, listenOptions =>
-    {
-        listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
-    });
-});
 
 // ── Configuration ────────────────────────────────────────────────────────────
 // All secrets come from environment variables / App Service settings.
