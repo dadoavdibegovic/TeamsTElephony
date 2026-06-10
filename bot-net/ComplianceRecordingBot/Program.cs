@@ -1,13 +1,50 @@
+using System.Security.Cryptography.X509Certificates;
+using Azure.Identity;
 using ComplianceRecordingBot.Authentication;
 using ComplianceRecordingBot.Bot;
 using ComplianceRecordingBot.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Key Vault configuration ──────────────────────────────────────────────────
+// Non-secret config (AppId, TenantId, ServiceCname, endpoints) comes from
+// appsettings[.Production].json. Secrets are pulled from Key Vault using the host's
+// managed identity (the VM's system-assigned MI has Key Vault Secrets User), so no
+// secret value is written to disk. KeyVault:Uri is set in appsettings.Production.json.
+var kvUri = builder.Configuration["KeyVault:Uri"];
+if (!string.IsNullOrWhiteSpace(kvUri))
+{
+    builder.Configuration.AddAzureKeyVault(
+        new Uri(kvUri),
+        new DefaultAzureCredential(),
+        new BotKeyVaultSecretManager());
+}
+
+// ── Kestrel TLS on 443 (self-hosted on the VM; no IIS) ───────────────────────
+// The bot is hosted directly (Windows Service / console) on the VM, so Kestrel
+// terminates TLS itself. The *.sgb-energie.de wildcard cert (loaded from KV as
+// Bot:MediaCertPfxBase64) covers the bot FQDN call.sgb-energie.de.
+// Guarded by cert presence so local dev (no KV/cert) keeps Kestrel defaults.
+var pfxBase64 = builder.Configuration["Bot:MediaCertPfxBase64"];
+var pfxPassword = builder.Configuration["Bot:MediaCertPfxPassword"];
+if (!string.IsNullOrWhiteSpace(pfxBase64))
+{
+    var tlsCert = new X509Certificate2(
+        Convert.FromBase64String(pfxBase64),
+        pfxPassword,
+        X509KeyStorageFlags.MachineKeySet);
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.ListenAnyIP(443, listen => listen.UseHttps(tlsCert));
+    });
+}
+
+// ── Windows Service hosting ──────────────────────────────────────────────────
+// Lets the published exe run under the Windows Service Control Manager on the VM.
+// Harmless when launched as a plain console process (e.g. local dev).
+builder.Host.UseWindowsService();
+
 // ── Configuration ────────────────────────────────────────────────────────────
-// All secrets come from environment variables / App Service settings.
-// KV references (@Microsoft.KeyVault(...)) are resolved automatically by
-// Azure App Service when managed identity has Key Vault Secrets User.
 builder.Services.Configure<BotConfig>(builder.Configuration.GetSection("Bot"));
 builder.Services.Configure<BackendConfig>(builder.Configuration.GetSection("Backend"));
 

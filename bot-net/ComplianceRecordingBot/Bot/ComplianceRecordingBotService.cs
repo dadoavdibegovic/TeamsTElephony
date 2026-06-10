@@ -365,12 +365,12 @@ public class ComplianceRecordingBotService : IHostedService, IDisposable
                 cert.Subject, cert.Thumbprint[..8], cert.HasPrivateKey);
 
             // ── MediaPlatform.Initialize() ───────────────────────────────────────
-            // Port: App Service routes 443 externally to the internal port (WEBSITES_PORT).
-            // The media SDK needs both public and internal port values.
-            // For App Service, the internal port is the same as WEBSITES_PORT (9442).
-            // The public port is 443 (standard HTTPS).
-            const int internalPort = 9442;
-            const int publicPort = 443;
+            // VM hosting: a Standard public IP maps 1:1 to the NIC's private IP, preserving
+            // ports (no PAT), so the media port is the same internally and publicly. It must
+            // be DISTINCT from the 443 signaling/notification endpoint that Kestrel owns, and
+            // open in the NSG (Allow-Media-TCP = 8445).
+            const int internalPort = 8445;
+            const int publicPort = 8445;
 
             var mediaPlatformSettings = new MediaPlatformSettings
             {

@@ -9,7 +9,9 @@ bot-net/**/obj/
 bot-net/**/publish/
 bot-net/bot-publish.zip
 bot-net/**/*.user
+bot-net/certs/
+bot-net/**/*.pfx
+bot-net/**/*.p12
 bot-net/.vs/
 bot-net/**/*.pubxml
-bot-net/**/appsettings.Production.json
 
