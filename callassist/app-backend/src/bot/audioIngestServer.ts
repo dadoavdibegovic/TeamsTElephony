@@ -3,7 +3,7 @@ import { Duplex } from "stream";
 import { WebSocketServer, WebSocket, RawData } from "ws";
 import { audioOrchestrator } from "../audio/audioOrchestrator";
 import { callStore } from "../state/callStore";
-import { pushToAgent } from "../signalr/hub";
+import { publishCallStarted, publishCallEnded } from "../crm/crmTranscriptPublisher";
 import { trackEvent, trackException } from "../utils/telemetry";
 
 const PATH_PATTERN = /^\/bot\/audio\/([^/?]+)\/?$/;
@@ -157,8 +157,7 @@ async function handleConnection(ws: WebSocket, correlationId: string): Promise<v
     trackEvent("bot_ws_closed", { correlationId, code, framesIn, bytesIn });
     audioOrchestrator.stopForCall(correlationId);
     callStore.update(correlationId, { phase: "ended", endedAt: new Date() });
-    pushToAgent("callEnded", { correlationId, endedAt: new Date().toISOString() })
-      .catch((err) => console.error("callEnded push failed", err));
+    publishCallEnded({ callId: correlationId, endedAt: new Date().toISOString() });
   });
 
   ws.on("error", (err: Error) => {
@@ -191,12 +190,14 @@ async function handleCallStarted(msg: CallStartedMsg): Promise<void> {
 
   await audioOrchestrator.startForCall(correlationId);
 
-  await pushToAgent("callAnswered", {
-    correlationId,
-    callConnectionId:  null,
-    callerPhone:       msg.callerPhone ?? null,
-    callerDisplayName: msg.callerDisplayName ?? null,
-    answeredAt:        new Date().toISOString(),
+  // Deliver the call to the CRM: caller number + which agent + callId so the CRM
+  // opens the window on that agent's screen and binds the live transcript stream.
+  publishCallStarted({
+    callId:     correlationId,
+    callerId:   msg.callerPhone ?? null,
+    callerName: msg.callerDisplayName ?? null,
+    agentUpn:   msg.agentUpn ?? null,
+    startedAt:  msg.startedAt ?? new Date().toISOString(),
   });
 }
 
