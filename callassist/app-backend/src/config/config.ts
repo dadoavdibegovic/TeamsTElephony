@@ -4,23 +4,18 @@ function req(k: string): string {
   return v;
 }
 
+function opt(k: string): string | undefined {
+  const v = process.env[k];
+  return v && v.length > 0 ? v : undefined;
+}
+
 export const config = {
-  entra: {
-    tenantId:     req("ENTRA_TENANT_ID"),
-    clientId:     req("ENTRA_CLIENT_ID"),
-    clientSecret: req("ENTRA_CLIENT_SECRET"),
-  },
-  crm: {
-    baseUrl: req("CRM_BASE_URL"),
-    apiKey:  req("CRM_API_KEY"),
-  },
-  signalr: {
-    connectionString: req("SIGNALR_CONNECTION_STRING"),
-  },
-  openai: {
-    endpoint:   req("AZURE_OPENAI_ENDPOINT"),
-    key:        req("AZURE_OPENAI_KEY"),
-    deployment: req("AZURE_OPENAI_DEPLOYMENT"),
+  // CRM transcript webhook (transport B): we POST call + transcript events here.
+  // Optional on purpose — the backend must boot before the CRM receiver endpoint
+  // exists; the publisher no-ops until CRM_WEBHOOK_URL is set.
+  crmWebhook: {
+    url:    opt("CRM_WEBHOOK_URL"),
+    apiKey: opt("CRM_WEBHOOK_KEY"),
   },
   speech: {
     key:    req("AZURE_SPEECH_KEY"),

@@ -11,7 +11,6 @@ import helmet from "helmet";
 import cors from "cors";
 import { config } from "./config/config";
 import { healthRouter } from "./routes/healthRouter";
-import { signalrRouter } from "./routes/signalrRouter";
 import { attachAudioIngestServer } from "./bot/audioIngestServer";
 
 const app = express();
@@ -42,7 +41,6 @@ app.use((req, _res, next) => {
 });
 
 app.use("/health", healthRouter);
-app.use("/", signalrRouter);
 
 const server = app.listen(config.app.port, () => {
   console.log(`app-backend listening on port ${config.app.port} (${config.app.nodeEnv})`);

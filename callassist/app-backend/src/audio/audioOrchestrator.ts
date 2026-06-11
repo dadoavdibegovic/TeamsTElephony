@@ -1,10 +1,7 @@
 import { PassThrough } from "stream";
 import { SpeechTranscriber, TranscriptEvent } from "./speechTranscriber";
-import { SuggestionEngine } from "./suggestionEngine";
-import { pushToAgent } from "../signalr/hub";
+import { publishTranscript } from "../crm/crmTranscriptPublisher";
 import { trackEvent, trackException } from "../utils/telemetry";
-
-const MAX_BUFFER_CHARS = 2000;
 
 type Speaker = "caller" | "agent";
 
@@ -15,8 +12,6 @@ interface ActiveSpeaker {
 
 interface ActiveCall {
   speakers: Record<Speaker, ActiveSpeaker>;
-  engine:   SuggestionEngine;
-  buffer:   string;
 }
 
 class AudioOrchestrator {
@@ -34,22 +29,23 @@ class AudioOrchestrator {
       return;
     }
 
-    const engine = new SuggestionEngine();
     const speakers: Record<Speaker, ActiveSpeaker> = {
       caller: await this.startSpeaker(correlationId, "caller"),
       agent:  await this.startSpeaker(correlationId, "agent"),
     };
 
-    const call: ActiveCall = { speakers, engine, buffer: "" };
+    const call: ActiveCall = { speakers };
     this.active.set(correlationId, call);
 
     for (const sp of ["caller", "agent"] as Speaker[]) {
       speakers[sp].transcriber.on("transcript", (event: TranscriptEvent) => {
-        this.handleTranscript(correlationId, sp, event).catch((err: unknown) => {
+        try {
+          this.handleTranscript(correlationId, sp, event);
+        } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error("transcript handling failed", { correlationId, speaker: sp, msg });
           trackException(err, { correlationId, stage: "transcript", speaker: sp });
-        });
+        }
       });
 
       speakers[sp].transcriber.on("error", (err: Error) => {
@@ -96,38 +92,21 @@ class AudioOrchestrator {
     return this.active.size;
   }
 
-  private async handleTranscript(
+  private handleTranscript(
     correlationId: string,
     speaker: Speaker,
     event: TranscriptEvent,
-  ): Promise<void> {
-    const call = this.active.get(correlationId);
-    if (!call) return;
+  ): void {
+    if (!this.active.has(correlationId)) return;
 
-    await pushToAgent("transcript", {
-      correlationId,
+    // Forward the live caption to the CRM. The CRM owns the window UI and any
+    // later processing/suggestions (out of scope here).
+    publishTranscript({
+      callId:    correlationId,
       speaker,
-      text:    event.text,
-      isFinal: event.isFinal,
-    });
-
-    if (!event.isFinal) return;
-
-    // Combined buffer across both speakers for AI context. Prefix each line
-    // so the model knows who said what.
-    const line = `${speaker === "caller" ? "K" : "A"}: ${event.text}`;
-    const next = call.buffer.length > 0 ? `${call.buffer}\n${line}` : line;
-    call.buffer = next.length > MAX_BUFFER_CHARS
-      ? next.slice(-MAX_BUFFER_CHARS)
-      : next;
-
-    const suggestion = await call.engine.getSuggestion(call.buffer);
-    if (!suggestion) return;
-
-    await pushToAgent("aiSuggestion", {
-      correlationId,
-      suggestion,
-      transcript: call.buffer,
+      text:      event.text,
+      isFinal:   event.isFinal,
+      timestamp: event.timestamp.toISOString(),
     });
   }
 }
